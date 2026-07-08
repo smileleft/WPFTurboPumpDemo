@@ -10,6 +10,7 @@ using System.Diagnostics;
 using OxyPlot;
 using OxyPlot.Axes;
 using OxyPlot.Series;
+using System.Windows.Threading;
 
 namespace SerialGuiApp
 {
@@ -25,6 +26,7 @@ namespace SerialGuiApp
     /// </summary>
     public partial class MainWindow : Window
     {
+		public enum ConnectionState { Disconnected, Connected, Reconnecting }
         private SerialPort? _serialPort;
         private readonly StringBuilder _receiveBuffer = new();
         private StreamWriter? _autoLogWriter;
@@ -33,6 +35,17 @@ namespace SerialGuiApp
 		private readonly LineSeries _pressureSeries = new() { Title = "압력(kPa)", YAxisKey = "PressureAxis", Color = OxyColors.SteelBlue };
 		private readonly Stopwatch _plotStopwatch = new();
 		private const int MaxPlotPoints = 300;
+		
+		private DispatcherTimer? _reconnectTimer;
+		private DispatcherTimer? _heartbeatTimer;
+		private DateTime _lastDataReceivedUtc;
+		private string? _lastPortName;
+		private int _lastBaudRate;
+		private bool _isReconnecting;
+		private int _reconnectAttempt;
+
+		private const int HeartbeatTimeoutSeconds = 6;
+		private const int ReconnectIntervalSeconds = 3;
 
         public MainWindow()
         {
@@ -112,93 +125,165 @@ namespace SerialGuiApp
 		}
 
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_serialPort is { IsOpen: true })
-            {
-                Disconnect();
-                return;
-            }
+		{
+			if (_isReconnecting)
+			{
+				StopReconnectAttempts();
+				return;
+			}
 
-            if (PortComboBox.SelectedItem is not string portName)
-            {
-                AppendLog("[오류] 포트를 선택하세요.");
-                return;
-            }
+			if (_serialPort is { IsOpen: true })
+			{
+				Disconnect(userInitiated: true);
+				return;
+			}
 
-            var baudText = (BaudRateComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content as string;
-            if (!int.TryParse(baudText, out var baudRate))
-            {
-                baudRate = 9600;
-            }
+			TryOpenPort(fromUi: true);
+		}
 
-            try
-            {
-                _serialPort = new SerialPort(portName, baudRate)
-                {
-                    Parity = Parity.None,
-                    DataBits = 8,
-                    StopBits = StopBits.One,
-                    Handshake = Handshake.None,
-                    NewLine = "\n",
-                    ReadTimeout = 2000,
-                    WriteTimeout = 2000,
-                };
-                _serialPort.DataReceived += SerialPort_DataReceived;
-                _serialPort.Open();
+		private bool TryOpenPort(bool fromUi)
+		{
+			string? portName;
+			int baudRate;
 
-                SetConnectedUiState(true);
-                AppendLog($"[연결됨] {portName} @ {baudRate}bps");
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[오류] 포트 열기 실패: {ex.Message}");
-                _serialPort = null;
-            }
-        }
+			if (fromUi)
+			{
+				if (PortComboBox.SelectedItem is not string selectedPort)
+				{
+					AppendLog("[오류] 포트를 선택하세요.");
+					return false;
+				}
 
-        private void Disconnect()
-        {
-            try
-            {
-                if (_serialPort != null)
-                {
-                    _serialPort.DataReceived -= SerialPort_DataReceived;
-                    if (_serialPort.IsOpen) _serialPort.Close();
-                    _serialPort.Dispose();
-                }
-            }
-            catch (Exception ex)
-            {
-                AppendLog($"[오류] 포트 닫기 실패: {ex.Message}");
-            }
-            finally
-            {
-                _serialPort = null;
-                SetConnectedUiState(false);
-                AppendLog("[연결 해제됨]");
-            }
-        }
+				portName = selectedPort;
+				var baudText = (BaudRateComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content as string;
+				baudRate = int.TryParse(baudText, out var parsedBaud) ? parsedBaud : 9600;
+			}
+			else
+			{
+				portName = _lastPortName;
+				baudRate = _lastBaudRate;
+				if (portName == null) return false;
+			}
 
-        private void SetConnectedUiState(bool connected)
-        {
-            ConnectButton.Content = connected ? "연결 해제" : "연결";
-            StatusText.Text = connected ? "연결됨" : "연결 안 됨";
-            StatusLight.Fill = connected ? Brushes.LimeGreen : Brushes.Gray;
+			try
+			{
+				var port = new SerialPort(portName, baudRate)
+				{
+					Parity = Parity.None,
+					DataBits = 8,
+					StopBits = StopBits.One,
+					Handshake = Handshake.None,
+					NewLine = "\n",
+					ReadTimeout = 2000,
+					WriteTimeout = 2000,
+				};
+				port.DataReceived += SerialPort_DataReceived;
+				port.Open();
 
-            GetTempButton.IsEnabled = connected;
-            GetPressureButton.IsEnabled = connected;
-            ValveOpenButton.IsEnabled = connected;
-            ValveCloseButton.IsEnabled = connected;
+				_serialPort = port;
+				_lastPortName = portName;
+				_lastBaudRate = baudRate;
+				_reconnectAttempt = 0;
 
-            PortComboBox.IsEnabled = !connected;
-            BaudRateComboBox.IsEnabled = !connected;
-        }
+				StopReconnectTimer();
+				SetUiState(ConnectionState.Connected);
+				AppendLog(fromUi ? $"[연결됨] {portName} @ {baudRate}bps" : $"[재연결 성공] {portName} @ {baudRate}bps");
+
+				StartHeartbeatMonitor();
+				return true;
+			}
+			catch (Exception ex)
+			{
+				_serialPort = null;
+				AppendLog(fromUi
+					? $"[오류] 포트 열기 실패: {ex.Message}"
+					: $"[재연결 실패 ({_reconnectAttempt}회)] {ex.Message}");
+				return false;
+			}
+		}
+
+        private void Disconnect(bool userInitiated)
+		{
+			StopHeartbeatMonitor();
+
+			try
+			{
+				if (_serialPort != null)
+				{
+					_serialPort.DataReceived -= SerialPort_DataReceived;
+					if (_serialPort.IsOpen) _serialPort.Close();
+					_serialPort.Dispose();
+				}
+			}
+			catch (Exception ex)
+			{
+				AppendLog($"[오류] 포트 닫기 실패: {ex.Message}");
+			}
+			finally
+			{
+				_serialPort = null;
+			}
+
+			if (userInitiated)
+			{
+				StopReconnectTimer();
+				_lastPortName = null; // 사용자가 직접 끊으면 자동 재연결 대상에서 제외
+				SetUiState(ConnectionState.Disconnected);
+				AppendLog("[연결 해제됨]");
+				return;
+			}
+
+			AppendLog("[연결 끊김 감지]");
+			if (AutoReconnectCheckBox.IsChecked == true && _lastPortName != null)
+			{
+				StartReconnectTimer();
+			}
+			else
+			{
+				SetUiState(ConnectionState.Disconnected);
+			}
+		}
+
+        private void SetUiState(ConnectionState state)
+		{
+			bool connected = state == ConnectionState.Connected;
+			bool reconnecting = state == ConnectionState.Reconnecting;
+
+			ConnectButton.Content = state switch
+			{
+				ConnectionState.Connected => "연결 해제",
+				ConnectionState.Reconnecting => "재연결 취소",
+				_ => "연결",
+			};
+
+			StatusText.Text = state switch
+			{
+				ConnectionState.Connected => "연결됨",
+				ConnectionState.Reconnecting => $"재연결 시도 중 ({_reconnectAttempt}회)",
+				_ => "연결 안 됨",
+			};
+
+			StatusLight.Fill = state switch
+			{
+				ConnectionState.Connected => Brushes.LimeGreen,
+				ConnectionState.Reconnecting => Brushes.Orange,
+				_ => Brushes.Gray,
+			};
+
+			GetTempButton.IsEnabled = connected;
+			GetPressureButton.IsEnabled = connected;
+			ValveOpenButton.IsEnabled = connected;
+			ValveCloseButton.IsEnabled = connected;
+
+			PortComboBox.IsEnabled = !connected && !reconnecting;
+			BaudRateComboBox.IsEnabled = !connected && !reconnecting;
+		}
 
         protected override void OnClosed(EventArgs e)
         {
-            Disconnect();
-            StopAutoSave();
-            base.OnClosed(e);
+            Disconnect(userInitiated: true);
+			StopAutoSave();
+			base.OnClosed(e);
         }
 
         // ---------------------------------------------------------------
@@ -225,7 +310,8 @@ namespace SerialGuiApp
             }
             catch (Exception ex)
             {
-                AppendLog($"[오류] 전송 실패: {ex.Message}");
+                AppendLog($"[오류] 전송 실패, 연결 끊김으로 처리합니다: {ex.Message}");
+				Disconnect(userInitiated: false);
             }
         }
 
@@ -238,14 +324,20 @@ namespace SerialGuiApp
             if (_serialPort is not { IsOpen: true }) return;
 
             string chunk;
-            try
-            {
-                chunk = _serialPort.ReadExisting();
-            }
-            catch (Exception)
-            {
-                return;
-            }
+			try
+			{
+				chunk = _serialPort.ReadExisting();
+				_lastDataReceivedUtc = DateTime.UtcNow;
+			}
+			catch (Exception ex)
+			{
+				Dispatcher.Invoke(() =>
+				{
+					AppendLog($"[오류] 수신 중 예외 발생, 연결 끊김으로 처리합니다: {ex.Message}");
+					Disconnect(userInitiated: false);
+				});
+				return;
+			}
 
             // 백그라운드(수신) 스레드에서 호출되므로 버퍼 조작 후 UI 갱신은 Dispatcher로 넘긴다.
             _receiveBuffer.Append(chunk);
@@ -437,5 +529,76 @@ namespace SerialGuiApp
             _autoLogWriter = null;
             AutoSavePathText.Text = string.Empty;
         }
+		
+		// ---------------------------------------------------------------
+		// 자동 재연결
+		// ---------------------------------------------------------------
+
+		private void StartReconnectTimer()
+		{
+			_isReconnecting = true;
+			_reconnectAttempt = 0;
+			SetUiState(ConnectionState.Reconnecting);
+
+			_reconnectTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(ReconnectIntervalSeconds) };
+			_reconnectTimer.Tick -= ReconnectTimer_Tick;
+			_reconnectTimer.Tick += ReconnectTimer_Tick;
+			_reconnectTimer.Start();
+
+			AppendLog($"[자동 재연결] {ReconnectIntervalSeconds}초 간격으로 {_lastPortName} 재연결을 시도합니다...");
+		}
+
+		private void ReconnectTimer_Tick(object? sender, EventArgs e)
+		{
+			_reconnectAttempt++;
+			SetUiState(ConnectionState.Reconnecting); // 시도 횟수 텍스트 갱신
+			TryOpenPort(fromUi: false); // 성공하면 내부에서 StopReconnectTimer() 호출됨
+		}
+
+		private void StopReconnectTimer()
+		{
+			if (_reconnectTimer != null)
+			{
+				_reconnectTimer.Stop();
+				_reconnectTimer.Tick -= ReconnectTimer_Tick;
+			}
+			_isReconnecting = false;
+		}
+
+		private void StopReconnectAttempts()
+		{
+			StopReconnectTimer();
+			_lastPortName = null;
+			SetUiState(ConnectionState.Disconnected);
+			AppendLog("[자동 재연결 취소됨]");
+		}
+
+		// ---------------------------------------------------------------
+		// 하트비트(연결 끊김 감지)
+		// ---------------------------------------------------------------
+
+		private void StartHeartbeatMonitor()
+		{
+			_lastDataReceivedUtc = DateTime.UtcNow;
+
+			_heartbeatTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+			_heartbeatTimer.Tick -= HeartbeatTimer_Tick;
+			_heartbeatTimer.Tick += HeartbeatTimer_Tick;
+			_heartbeatTimer.Start();
+		}
+
+		private void StopHeartbeatMonitor() => _heartbeatTimer?.Stop();
+
+		private void HeartbeatTimer_Tick(object? sender, EventArgs e)
+		{
+			if (_serialPort is not { IsOpen: true }) return;
+
+			var elapsed = DateTime.UtcNow - _lastDataReceivedUtc;
+			if (elapsed.TotalSeconds > HeartbeatTimeoutSeconds)
+			{
+				AppendLog($"[경고] {HeartbeatTimeoutSeconds}초 이상 수신 데이터 없음 — 연결 끊김으로 판단합니다.");
+				Disconnect(userInitiated: false);
+			}
+		}
     }
 }

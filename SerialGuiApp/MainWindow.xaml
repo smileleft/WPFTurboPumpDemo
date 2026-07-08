@@ -29,7 +29,7 @@
                 </ComboBox>
 
                 <Button x:Name="ConnectButton" Content="연결" Width="90" Click="ConnectButton_Click"/>
-
+				<CheckBox x:Name="AutoReconnectCheckBox" Content="자동 재연결" IsChecked="True" VerticalAlignment="Center" Margin="16,0,0,0"/>
                 <Ellipse x:Name="StatusLight" Width="14" Height="14" Fill="Gray" Margin="20,0,6,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="StatusText" Text="연결 안 됨" VerticalAlignment="Center" FontWeight="Bold"/>
             </StackPanel>
