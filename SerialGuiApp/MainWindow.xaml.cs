@@ -6,6 +6,10 @@ using System.Windows;
 using System.Windows.Media;
 using System.IO;
 using Microsoft.Win32;
+using System.Diagnostics;
+using OxyPlot;
+using OxyPlot.Axes;
+using OxyPlot.Series;
 
 namespace SerialGuiApp
 {
@@ -24,11 +28,17 @@ namespace SerialGuiApp
         private SerialPort? _serialPort;
         private readonly StringBuilder _receiveBuffer = new();
         private StreamWriter? _autoLogWriter;
+		private readonly PlotModel _plotModel = new() { Title = "터보펌프 텔레메트리" };
+		private readonly LineSeries _tempSeries = new() { Title = "온도(°C)", YAxisKey = "TempAxis", Color = OxyColors.OrangeRed };
+		private readonly LineSeries _pressureSeries = new() { Title = "압력(kPa)", YAxisKey = "PressureAxis", Color = OxyColors.SteelBlue };
+		private readonly Stopwatch _plotStopwatch = new();
+		private const int MaxPlotPoints = 300;
 
         public MainWindow()
         {
             InitializeComponent();
             RefreshPorts();
+			InitializePlot();
         }
 
         // ---------------------------------------------------------------
@@ -56,6 +66,50 @@ namespace SerialGuiApp
                 PortComboBox.SelectedIndex = 0;
             }
         }
+		
+		private void InitializePlot()
+		{
+			_plotModel.Axes.Add(new LinearAxis
+			{
+				Position = AxisPosition.Bottom,
+				Title = "경과 시간(초)",
+			});
+			_plotModel.Axes.Add(new LinearAxis
+			{
+				Position = AxisPosition.Left,
+				Key = "TempAxis",
+				Title = "온도(°C)",
+				TextColor = OxyColors.OrangeRed,
+				TitleColor = OxyColors.OrangeRed,
+			});
+			_plotModel.Axes.Add(new LinearAxis
+			{
+				Position = AxisPosition.Right,
+				Key = "PressureAxis",
+				Title = "압력(kPa)",
+				TextColor = OxyColors.SteelBlue,
+				TitleColor = OxyColors.SteelBlue,
+			});
+
+			_plotModel.Series.Add(_tempSeries);
+			_plotModel.Series.Add(_pressureSeries);
+
+			TelemetryPlotView.Model = _plotModel;
+			_plotStopwatch.Start();
+		}
+
+		private void AddPlotPoint(LineSeries series, double value)
+		{
+			double x = _plotStopwatch.Elapsed.TotalSeconds;
+			series.Points.Add(new DataPoint(x, value));
+
+			if (series.Points.Count > MaxPlotPoints)
+			{
+				series.Points.RemoveAt(0);
+			}
+
+			_plotModel.InvalidatePlot(true);
+		}
 
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
@@ -265,8 +319,22 @@ namespace SerialGuiApp
             }
         }
 
-        private void UpdateTemp(string rawValue) => TempValueText.Text = rawValue;
-        private void UpdatePressure(string rawValue) => PressureValueText.Text = rawValue;
+        private void UpdateTemp(string rawValue)
+		{
+			TempValueText.Text = rawValue;
+			if (double.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+			{
+				AddPlotPoint(_tempSeries, value);
+			}
+		}
+        private void UpdatePressure(string rawValue)
+		{
+			PressureValueText.Text = rawValue;
+			if (double.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+			{
+				AddPlotPoint(_pressureSeries, value);
+			}
+		}
 
         // ---------------------------------------------------------------
         // 로그 UI

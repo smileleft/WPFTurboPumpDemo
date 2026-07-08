@@ -1,12 +1,14 @@
 <Window x:Class="SerialGuiApp.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+		xmlns:oxy="http://oxyplot.org/wpf"
         Title="터보펌프 계측 제어 GUI (Serial Demo)" Height="600" Width="820"
         MinHeight="560" MinWidth="760">
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+			<RowDefinition Height="220"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -76,9 +78,13 @@
                 </StackPanel>
             </GroupBox>
         </Grid>
+		
+		<GroupBox Header="실시간 그래프" Grid.Row="2" Margin="0,0,0,10">
+			<oxy:PlotView x:Name="TelemetryPlotView" Margin="6"/>
+		</GroupBox>
 
         <!-- 통신 로그 -->
-        <GroupBox Header="통신 로그" Grid.Row="2">
+        <GroupBox Header="통신 로그" Grid.Row="3">
             <DockPanel Margin="8">
                 <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
 					<CheckBox x:Name="AutoSaveCheckBox" Content="자동 저장(실시간)" VerticalAlignment="Center" Margin="0,0,16,0"
