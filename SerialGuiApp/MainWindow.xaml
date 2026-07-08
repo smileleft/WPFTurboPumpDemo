@@ -80,8 +80,14 @@
         <!-- 통신 로그 -->
         <GroupBox Header="통신 로그" Grid.Row="2">
             <DockPanel Margin="8">
-                <Button DockPanel.Dock="Bottom" Content="로그 지우기" Width="100" HorizontalAlignment="Right" Margin="0,8,0,0" Click="ClearLogButton_Click"/>
-                <ListBox x:Name="LogListBox" FontFamily="Consolas" FontSize="12"/>
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+					<CheckBox x:Name="AutoSaveCheckBox" Content="자동 저장(실시간)" VerticalAlignment="Center" Margin="0,0,16,0"
+                      Checked="AutoSaveCheckBox_Checked" Unchecked="AutoSaveCheckBox_Unchecked"/>
+					<TextBlock x:Name="AutoSavePathText" Text="" VerticalAlignment="Center" Foreground="Gray" Margin="0,0,16,0" FontSize="11"/>
+					<Button Content="로그 저장" Width="100" Margin="0,0,8,0" Click="SaveLogButton_Click"/>
+					<Button Content="로그 지우기" Width="100" Click="ClearLogButton_Click"/>
+				</StackPanel>
+				<ListBox x:Name="LogListBox" FontFamily="Consolas" FontSize="12"/>
             </DockPanel>
         </GroupBox>
     </Grid>

@@ -4,6 +4,8 @@ using System.IO.Ports;
 using System.Text;
 using System.Windows;
 using System.Windows.Media;
+using System.IO;
+using Microsoft.Win32;
 
 namespace SerialGuiApp
 {
@@ -21,6 +23,7 @@ namespace SerialGuiApp
     {
         private SerialPort? _serialPort;
         private readonly StringBuilder _receiveBuffer = new();
+        private StreamWriter? _autoLogWriter;
 
         public MainWindow()
         {
@@ -140,6 +143,7 @@ namespace SerialGuiApp
         protected override void OnClosed(EventArgs e)
         {
             Disconnect();
+            StopAutoSave();
             base.OnClosed(e);
         }
 
@@ -272,10 +276,25 @@ namespace SerialGuiApp
         {
             void Add()
             {
-                LogListBox.Items.Add($"[{DateTime.Now:HH:mm:ss.fff}] {message}");
+                var formatted = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
+                LogListBox.Items.Add(formatted);
                 if (LogListBox.Items.Count > 0)
                 {
                     LogListBox.ScrollIntoView(LogListBox.Items[^1]);
+                }
+
+                if (_autoLogWriter != null)
+                {
+                    try
+                    {
+                        _autoLogWriter.WriteLine(formatted);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogListBox.Items.Add($"[{DateTime.Now:HH:mm:ss.fff}] [오류] 자동 저장 실패, 자동 저장을 중지합니다: {ex.Message}");
+                        StopAutoSave();
+                        AutoSaveCheckBox.IsChecked = false;
+                    }
                 }
             }
 
@@ -290,5 +309,65 @@ namespace SerialGuiApp
         }
 
         private void ClearLogButton_Click(object sender, RoutedEventArgs e) => LogListBox.Items.Clear();
+
+        private void SaveLogButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new SaveFileDialog
+            {
+                Title = "통신 로그 저장",
+                Filter = "텍스트 파일 (*.txt)|*.txt|모든 파일 (*.*)|*.*",
+                FileName = $"SerialLog_{DateTime.Now:yyyyMMdd_HHmmss}.txt",
+            };
+
+            if (dialog.ShowDialog(this) != true) return;
+
+            try
+            {
+                var lines = new string[LogListBox.Items.Count];
+                for (int i = 0; i < LogListBox.Items.Count; i++)
+                    lines[i] = LogListBox.Items[i]?.ToString() ?? string.Empty;
+
+                File.WriteAllLines(dialog.FileName, lines, Encoding.UTF8);
+                AppendLog($"[로그 저장 완료] {dialog.FileName}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[오류] 로그 저장 실패: {ex.Message}");
+            }
+        }
+
+        private void AutoSaveCheckBox_Checked(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var logsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+                Directory.CreateDirectory(logsDirectory);
+
+                var filePath = Path.Combine(logsDirectory, $"SerialLog_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                _autoLogWriter = new StreamWriter(filePath, append: true, Encoding.UTF8) { AutoFlush = true };
+
+                AutoSavePathText.Text = filePath;
+                AppendLog($"[자동 저장 시작] {filePath}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[오류] 자동 저장 시작 실패: {ex.Message}");
+                AutoSaveCheckBox.IsChecked = false;
+            }
+        }
+
+        private void AutoSaveCheckBox_Unchecked(object sender, RoutedEventArgs e)
+        {
+            AppendLog("[자동 저장 중지]");
+            StopAutoSave();
+        }
+
+        private void StopAutoSave()
+        {
+            _autoLogWriter?.Flush();
+            _autoLogWriter?.Dispose();
+            _autoLogWriter = null;
+            AutoSavePathText.Text = string.Empty;
+        }
     }
 }
