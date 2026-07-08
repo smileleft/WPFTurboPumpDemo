@@ -1,15 +1,15 @@
 # 터보펌프 계측 제어 GUI 실습 (WPF + Serial)
 
-실물 하드웨어 없이 WPF 기반 Serial 장비 제어 GUI를 연습하기 위한 예제입니다.
+실물 하드웨어 없이 WPF 기반 Serial 장비 제어 GUI를 연습하기 위한 예제.
 `SerialGuiApp`(WPF 클라이언트)와 `DeviceSimulator`(가상 장비 역할을 하는 콘솔 프로그램)
-두 개의 프로젝트로 구성되어 있고, 가상 COM 포트 페어를 통해 서로 통신합니다.
+두 개의 프로젝트로 구성되어 있고, 가상 COM 포트 페어를 통해 서로 통신함.
 
 ```
 [SerialGuiApp (WPF)]  <-- 가상 COM 포트 페어 -->  [DeviceSimulator (콘솔)]
      COM10                                              COM11
 ```
 
-## 1. 사전 준비물
+## 1. 개발 환경
 
 - Windows 11
 - Visual Studio 2022 Community + ".NET desktop development" 워크로드
@@ -18,14 +18,14 @@
 
 ## 2. 가상 COM 포트 페어 만들기 (Free Virtual Serial Ports 사용)
 
-실물 장비가 없으므로, 서로 연결된 가상 COM 포트 한 쌍을 만들어야 합니다.
-이 실습에서는 **"Free Virtual Serial Ports"** (freevirtualserialports.com) 를 사용합니다.
+실물 장비가 없으므로, 서로 연결된 가상 COM 포트 한 쌍을 만들어야 함.
+이 실습에서는 **"Free Virtual Serial Ports"** (freevirtualserialports.com) 를 사용.
 이 도구는 사용자 모드(user-mode)로 동작하는 서명된 프로그램이라, com0com 같은
-커널 모드 드라이버 방식보다 Windows 11에서 설치/서명 문제가 훨씬 적습니다.
+커널 모드 드라이버 방식보다 Windows 11에서 설치/서명 문제가 훨씬 적음.
 
 > 참고: com0com은 2017년 이후 사실상 유지보수가 멈춘 프로젝트라, 최신 Windows 11
 > 환경(특히 Secure Boot이 켜진 PC)에서는 드라이버 서명 문제(코드 52 오류)로 설치가
-> 안 되는 경우가 종종 보고됩니다. 그래서 이번 실습은 사용자 모드 도구를 기본으로 안내합니다.
+> 안 되는 경우가 종종 보고됨. 그래서 이번 실습은 사용자 모드 도구를 기본으로 사용.
 
 ### 설치 및 포트 페어 생성
 
